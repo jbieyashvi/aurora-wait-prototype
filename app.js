@@ -9,17 +9,18 @@
 
   /* ---------- Script ---------- */
 
-  // Delay of each step after the previous one (ms). Demo pacing, not real response times.
-  var STEP_DELAYS = [2000, 5000, 8000, 10000, 10000];
+  // Delay of each step after the previous one (ms): one sweep of the activity line. Demo pacing, not real response times.
+  var STEP_DELAYS = [2000, 2000, 2000, 2000, 2000];
 
   var BUSINESSES = [
-    { id: 'hh',  name: 'Home Helpers' },
-    { id: 'khh', name: 'Kitchen Home Helpers' },
-    { id: 'scs', name: 'Shree Cook Services' },
-    { id: 'ann', name: 'Annapurna Cook Services' },
-    { id: 'ras', name: 'Rasoi Ghar Services' },
-    { id: 'dtc', name: 'Daily Tiffin & Cook' },
-    { id: 'mhc', name: 'Marwar Home Care' }
+    // x, y: pin position on the illustrative map, in % of its box.
+    { id: 'hh',  name: 'Home Helpers',            area: 'Nakoda Nagar · 0.8 km', x: 44, y: 42 },
+    { id: 'khh', name: 'Kitchen Home Helpers',    area: 'Nakoda Nagar · 1.2 km', x: 58, y: 56 },
+    { id: 'scs', name: 'Shree Cook Services',     area: 'Ratanada · 2.9 km',     x: 33, y: 64 },
+    { id: 'ann', name: 'Annapurna Cook Services', area: 'Sardarpura · 3.4 km',   x: 66, y: 32 },
+    { id: 'ras', name: 'Rasoi Ghar Services',     area: 'Paota · 3.8 km',        x: 38, y: 24 },
+    { id: 'dtc', name: 'Daily Tiffin & Cook',     area: 'Shastri Nagar · 4.1 km', x: 70, y: 72 },
+    { id: 'mhc', name: 'Marwar Home Care',        area: 'Basni · 4.6 km',        x: 24, y: 46 }
   ];
 
   // Call status of each business after each step (index = step).
@@ -71,7 +72,9 @@
       sheet: false,
       messages: OPENING.map(function (m) { return { from: m.from, text: m.text }; }),
       resultsFrom: null,    // first message shown under the results layout
-      prev: 'chat'          // where the Live progress back button returns to
+      prev: 'chat',         // where the Live progress back button returns to
+      lpOpen: { find: true, call: false, review: false },  // expanded Live progress stages
+      lpTab: 'map'          // Map or List inside the "found" stage
     };
   }
 
@@ -477,38 +480,87 @@
     '</div>');
   }
 
+  // Three stages, each a collapsible card: found, calling, reviewing.
+  // Each stage states its status in words; the icon only repeats it.
   function progressBody() {
     var p = state.phase;
     var s = statuses();
     var c = counts();
-    var label = p === 'preparing' ? 'Preparing your search'
-      : p === 'complete' ? 'Search complete'
-      : p === 'stopped' ? 'Stopped by you' : 'Search in progress';
-    var found = s ? '7 businesses found' : 'Finding businesses near Nakoda Nagar';
-    var mark = p === 'complete' ? '<span class="lp-mark" aria-hidden="true">' + checkSvg() + '</span>'
-      : p === 'stopped' ? '<span class="lp-mark" aria-hidden="true">' + img('stop', 14, 14) + '</span>'
-      : '<span class="lp-dot" aria-hidden="true"></span>';
-
-    var html = '<section class="lp-card lp-summary"><p class="lp-label">' + mark + label + '</p><p class="lp-found">' + found + '</p></section>';
-
-    if (!s) {
-      html += '<h2 class="lp-h">Calling businesses</h2><p class="lp-meta">' + (p === 'stopped' ? 'No calls were made' : 'Calls have not started yet') + '</p>';
-      html += '<section class="lp-card lp-list"><p class="lp-note">' + (p === 'stopped' ? 'No business answers were received.' : 'Answers appear in your conversation as they arrive.') + '</p></section>';
-      return html + reviewCard();
-    }
-
-    var called = BUSINESSES.filter(function (b) { return ['q', 'sq'].indexOf(s[b.id]) < 0; }).length;
+    var n = answerCount();
+    var called = s ? BUSINESSES.filter(function (b) { return ['q', 'sq'].indexOf(s[b.id]) < 0; }).length : 0;
     var reached = c.x + c.a + c.sc;   // a call cut off by stopping was still connected
-    var heading, meta;
-    if (ended()) {
-      heading = p === 'complete' ? 'Calls finished' : 'Calls stopped';
-      meta = called + ' called · ' + reached + ' reached · ' + plural(c.a, 'answer', 'answers');
-    } else {
-      heading = 'Calling businesses';
-      meta = callLine(c, true);
-    }
-    html += '<h2 class="lp-h">' + heading + '</h2><p class="lp-meta">' + meta + '</p>';
 
+    var find = !s
+      ? stage('find', p === 'stopped' ? 'stopped' : 'active',
+          p === 'stopped' ? 'Search stopped' : 'Finding businesses',
+          p === 'stopped' ? 'Stopped before businesses were found' : 'Looking near Nakoda Nagar',
+          findBody(null))
+      : stage('find', 'done', 'Businesses found', plural(BUSINESSES.length, 'business', 'businesses') + ' near Nakoda Nagar', findBody(s));
+
+    var call;
+    if (!s) call = stage('call', p === 'stopped' ? 'stopped' : 'pending', 'Calling businesses',
+      p === 'stopped' ? 'No calls were made' : 'Calls start once businesses are found', null);
+    else if (p === 'running') call = stage('call', 'active', 'Calling businesses', callLine(c, true), callBody(s, c));
+    else call = stage('call', p === 'complete' ? 'done' : 'stopped', p === 'complete' ? 'Calls finished' : 'Calls stopped',
+      called + ' called · ' + reached + ' reached', callBody(s, c));
+
+    var review;
+    if (p === 'complete') review = stage('review', 'done', 'Answers reviewed', plural(n, 'answer', 'answers') + ' compared against your request', reviewBody());
+    else if (p === 'stopped') review = stage('review', 'stopped', 'Review stopped',
+      n ? plural(n, 'answer', 'answers') + ' collected before you stopped' : 'No business answers were received', n ? reviewBody() : null);
+    else if (n) review = stage('review', 'active', 'Reviewing answers', plural(n, 'answer', 'answers') + ' so far · Compared as they arrive', reviewBody());
+    else review = stage('review', 'pending', 'Reviewing answers', 'Starts when the first business answers', null);
+
+    return find + call + review;
+  }
+
+  function stage(key, status, title, sub, body) {
+    var open = !!body && state.lpOpen[key];
+    var mark = status === 'done' ? checkSvg()
+      : status === 'stopped' ? '<span class="lp-ring is-stopped">' + img('stop', 12, 12) + '</span>'
+      : status === 'active' ? '<span class="lp-ring is-active"><span class="lp-dot"></span></span>'
+      : '<span class="lp-ring"></span>';
+    var head = '<span class="lp-mark" aria-hidden="true">' + mark + '</span>' +
+      '<span class="lp-htext"><span class="lp-stitle">' + esc(title) + '</span><span class="lp-ssub">' + esc(sub) + '</span></span>';
+    if (!body) return '<section class="lp-stage is-' + status + '"><div class="lp-shead">' + head + '</div></section>';
+    return '<section class="lp-stage is-' + status + (open ? ' is-open' : '') + '">' +
+      '<button type="button" class="lp-shead" data-act="lpToggle" data-k="' + key + '" aria-expanded="' + open + '" aria-controls="lp-' + key + '">' +
+        head + '<span class="lp-chev" aria-hidden="true">' + img('chev-down', 16, 16) + '</span></button>' +
+      '<div class="lp-sbody" id="lp-' + key + '"><div class="lp-sinner">' + body + '</div></div>' +
+    '</section>';
+  }
+
+  function findBody(s) {
+    var tab = state.lpTab;
+    var seg = '<div class="lp-seg" role="group" aria-label="Show businesses as">' +
+      '<button type="button" data-act="lpTab" data-v="map" aria-pressed="' + (tab === 'map') + '">Map</button>' +
+      '<button type="button" data-act="lpTab" data-v="list" aria-pressed="' + (tab === 'list') + '"' + (s ? '' : ' disabled') + '>List</button></div>';
+
+    var pins = s ? BUSINESSES.map(function (b) {
+      var st = s[b.id];
+      var initials = b.name.split(' ').slice(0, 2).map(function (w) { return w[0]; }).join('');
+      return '<span class="lp-pin' + (st === 'a' ? ' is-answer' : st === 'c' ? ' is-live' : '') + '" style="left:' + b.x + '%;top:' + b.y + '%">' +
+        initials + (st === 'a' ? '<span class="lp-pin-ok">' + checkSvg() + '</span>' : '') + '</span>';
+    }).join('') : '';
+    var map = '<div class="lp-map" data-pane="map"' + (tab === 'map' || !s ? '' : ' hidden') + '>' +
+      '<svg class="lp-roads" viewBox="0 0 358 230" preserveAspectRatio="none" aria-hidden="true">' +
+        '<path d="M-10 150 C 70 140 120 95 190 100 S 310 70 370 40"/><path d="M60 -10 C 80 60 150 120 170 240"/>' +
+        '<path d="M250 -10 C 240 70 260 150 330 240" class="thin"/><path d="M-10 60 C 60 70 110 40 200 30" class="thin"/>' +
+        '<path d="M20 240 C 80 190 160 190 230 170 S 330 160 370 175" class="thin"/>' +
+        '<ellipse cx="300" cy="120" rx="22" ry="14" class="water"/></svg>' +
+      '<span class="lp-radius' + (s ? '' : ' is-searching') + '" aria-hidden="true"></span>' +
+      '<span class="lp-you" aria-hidden="true"></span>' + pins +
+      '<p class="lp-mapcap"><span class="lp-capdot" aria-hidden="true"></span>' +
+        (s ? plural(BUSINESSES.length, 'business', 'businesses') + ' within 5 km' : 'Searching within 5 km') + '</p>' +
+      (s ? '<span class="sr">Map of businesses around Nakoda Nagar. Switch to List for names.</span>' : '') +
+    '</div>';
+    var list = s ? '<ul class="lp-blist" data-pane="list"' + (tab === 'list' ? '' : ' hidden') + '>' + BUSINESSES.map(function (b) {
+      return '<li><p class="lp-name">' + esc(b.name) + '</p><p class="lp-st">' + esc(b.area) + '</p></li>';
+    }).join('') + '</ul>' : '';
+    return seg + map + list;
+  }
+
+  function callBody(s, c) {
     var rows = [];
     BUSINESSES.forEach(function (b) {
       var st = s[b.id];
@@ -517,27 +569,24 @@
         a: 'Call ended · Answer received',
         n: 'No answer · The call was not picked up',
         c: 'On a call · Checking your requirements',
-        sc: 'Stopped · A call was under way when you stopped'
+        r: 'Ringing · Waiting for someone to answer',
+        q: 'Queued · Call has not started yet',
+        sc: 'Stopped · A call was under way when you stopped',
+        sr: 'Stopped · Ringing, not answered',
+        sq: 'Not called'
       }[st];
-      if (t) rows.push('<li class="lp-row' + (st === 'c' ? ' is-live' : '') + '"><p class="lp-name">' + esc(b.name) + '</p><p class="lp-st">' + esc(t) + '</p></li>');
+      rows.push('<li class="lp-row' + (st === 'c' ? ' is-live' : '') + '"><p class="lp-name">' + esc(b.name) + '</p><p class="lp-st">' + esc(t) + '</p></li>');
     });
-    if (c.r) rows.push('<li class="lp-row"><p class="lp-name">' + plural(c.r, 'nearby business', 'nearby businesses') + '</p><p class="lp-st">Ringing · Waiting for someone to answer</p></li>');
-    if (c.q) rows.push('<li class="lp-row"><p class="lp-name">' + plural(c.q, 'more business', 'more businesses') + '</p><p class="lp-st">Queued · Calls have not started yet</p></li>');
-    if (c.sr) rows.push('<li class="lp-row"><p class="lp-name">' + plural(c.sr, 'nearby business', 'nearby businesses') + '</p><p class="lp-st">Stopped · Ringing, not answered</p></li>');
-    if (c.sq) rows.push('<li class="lp-row"><p class="lp-name">' + plural(c.sq, 'more business', 'more businesses') + '</p><p class="lp-st">Not called</p></li>');
-
-    var note = !ended() ? 'Answers appear in your conversation as they arrive.'
-      : c.a ? 'Answers are in your conversation.' : 'No business answers were received.';
-    html += '<section class="lp-card lp-list"><ul>' + rows.join('') + '</ul><p class="lp-note">' + note + '</p></section>';
-    return html + reviewCard();
+    return '<ul class="lp-calls">' + rows.join('') + '</ul>';
   }
 
-  function reviewCard() {
-    var p = state.phase;
-    if (p === 'stopped') return '';
-    var t = p === 'complete' ? 'Responses reviewed' : 'Reviewing responses';
-    var d = p === 'complete' ? 'Each response marks which details were confirmed and which were not.' : 'Options are compared as businesses answer.';
-    return '<section class="lp-card lp-review"><h2 class="lp-rt">' + t + '</h2><p class="lp-rd">' + d + '</p></section>';
+  function reviewBody() {
+    var rows = answered().map(function (id) {
+      var a = ANSWERS[id];
+      return '<li class="lp-row"><p class="lp-name">' + esc(a.name) + '</p><p class="lp-st">' + esc(a.price + ' · ' + a.caveat) + '</p></li>';
+    });
+    return '<ul class="lp-calls">' + rows.join('') + '</ul>' +
+      '<p class="lp-note">Each answer marks which details were confirmed and which were not. Answers are in your conversation.</p>';
   }
 
   function sheetHtml() {
@@ -614,7 +663,10 @@
     var lp = document.getElementById('lpBody');
     if (lp) {
       var st = lp.scrollTop;
+      var hadPins = !!lp.querySelector('.lp-pin');
       lp.innerHTML = progressBody();
+      var map = lp.querySelector('.lp-map');
+      if (hadPins && map) map.classList.add('is-settled');   // pins pop in once, not on every update
       lp.scrollTop = st;
       document.getElementById('lpTitle').textContent = ended() ? 'Search activity' : 'Live progress';
     }
@@ -682,6 +734,19 @@
     else if (act === 'chat' || act === 'toChat') go('chat');
     else if (act === 'progress') { state.prev = route() === 'answers' ? 'answers' : 'chat'; go('progress'); }
     else if (act === 'back') go(state.prev);
+    else if (act === 'lpToggle') {
+      // Toggle in place so the open/close can animate.
+      var k = el.getAttribute('data-k');
+      state.lpOpen[k] = !state.lpOpen[k];
+      el.setAttribute('aria-expanded', state.lpOpen[k]);
+      el.parentNode.classList.toggle('is-open', state.lpOpen[k]);
+    }
+    else if (act === 'lpTab') {
+      state.lpTab = el.getAttribute('data-v');
+      var box = el.closest('.lp-sinner');
+      box.querySelectorAll('[data-act="lpTab"]').forEach(function (t) { t.setAttribute('aria-pressed', t === el); });
+      box.querySelectorAll('[data-pane]').forEach(function (pane) { pane.hidden = pane.getAttribute('data-pane') !== state.lpTab; });
+    }
   });
 
   root.addEventListener('submit', function (e) {
