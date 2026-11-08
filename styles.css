@@ -172,6 +172,8 @@ img { display: block; }
   position: relative; overflow: hidden; isolation: isolate;
   background: #fff; border: 1px solid #fff; border-radius: 23px; box-shadow: var(--shadow-card);
   padding: 15px 17px; display: flex; flex-direction: column; gap: 10px;
+  /* Same height in every state (the tallest is one answer with a caveat line), so the chat below never shifts. */
+  min-height: 189px;
 }
 .sc-preparing, .sc-stopped { background: #fafafa; }
 .sc-glow {
@@ -222,7 +224,7 @@ img { display: block; }
 .sc-arrow:hover img { opacity: .85; }
 .sc-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  border-top: 1px solid var(--line); padding-top: 11px; margin-top: 1px;
+  border-top: 1px solid var(--line); padding-top: 11px; margin-top: auto;
 }
 .sc-counts { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--ink-2); display: flex; align-items: center; min-width: 0; }
 .sc-link {
